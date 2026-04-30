@@ -1,0 +1,12 @@
+Loaded Processed_Data/DS1_W256_S128.csv  shape=(1992, 122)  subjects=[np.int64(1), np.int64(5), np.int64(7)]
+
+📚 Label classes: ['bending', 'walking']
+   walking-positive class index: 1 (walking)
+
+──── Fold 0 (held out: 1) | train=1344 test=648 ────
+    Logistic Regression      acc=0.975  walk_p=0.991  walk_r=0.974  f1=0.983
+    Ridge Classifier         acc=0.895  walk_p=0.892  walk_r=0.972  f1=0.930
+    SGD Classifier           acc=0.968  walk_p=0.966  walk_r=0.989  f1=0.978
+    Passive Aggressive       acc=0.941  walk_p=0.993  walk_r=0.925  f1=0.958
+    Linear Discriminant      acc=0.901  walk_p=0.897  walk_r=0.974  f1=0.934
+    Quadratic Discriminant   acc=0.968  walk_p=0.981  walk_r=0.974  f1=0.977
