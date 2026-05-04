@@ -3,8 +3,11 @@ Validate DS2-trained classifiers against held-out subjects in Validation_Data
 AND compare three training strategies side by side.
 
 Strategy A — 'aggregated':
-    Train on a random 70% of all DS2 windows (same split as run_ds2_aggregated.py:
-    stratified, random_state=42). Predict on Validation_Data.
+    Train on a random 80% of all DS2 windows (stratified random split,
+    random_state=42). Predict on Validation_Data. The 80/20 split is wider
+    than run_ds2_aggregated.py's 70/30 to deliberately exaggerate the
+    sample-size advantage over k-fold — useful for stress-testing whether
+    that advantage actually moves the model.
 
 Strategy B — 'kfold':
     GroupKFold(k=3) on DS2: 3 fold models per classifier, each trained on
@@ -63,7 +66,7 @@ VAL_CSV        = f"Processed_Data/Validation_W{WINDOW}_S{STEP}.csv"
 OUT_DIR        = "Results_Plots/Validation_DS2"
 RANDOM_STATE   = 42
 KFOLD_K        = 3
-AGGREGATED_TEST_SIZE = 0.30
+AGGREGATED_TEST_SIZE = 0.20   # 80/20 — wider gap vs kfold's ~67% per-fold size
 
 
 def _ensure_processed():
@@ -345,10 +348,12 @@ def main():
         "aggregated_matched": "#378ADD",
         "kfold":              "#D85A30",
     }
+    agg_pct = int(round((1 - AGGREGATED_TEST_SIZE) * 100))
+    matched_pct = int(round((avg_kf_train / len(y_train)) * 100))
     strat_labels = {
-        "aggregated":         f"aggregated (70% of DS2, n≈{int(len(y_train)*(1-AGGREGATED_TEST_SIZE))})",
-        "aggregated_matched": f"aggregated_matched (n≈{avg_kf_train})",
-        "kfold":              f"kfold avg of {KFOLD_K} folds (n≈{avg_kf_train}/fold)",
+        "aggregated":         f"aggregated ({agg_pct}% of DS2, n={int(len(y_train)*(1-AGGREGATED_TEST_SIZE))})",
+        "aggregated_matched": f"aggregated_matched ({matched_pct}% of DS2, n={avg_kf_train})",
+        "kfold":              f"kfold avg of {KFOLD_K} folds (n={avg_kf_train}/fold)",
     }
     for ax, metric, title in zip(
         axes,
@@ -368,8 +373,11 @@ def main():
         ax.grid(axis="x", alpha=0.3)
         ax.spines[["top", "right"]].set_visible(False)
         ax.legend(loc="lower right", fontsize=8)
-    plt.suptitle("Validation_Data: aggregated vs aggregated_matched vs kfold",
-                 fontsize=13, fontweight="bold")
+    test_pct = int(round(AGGREGATED_TEST_SIZE * 100))
+    plt.suptitle(
+        f"Validation_Data: aggregated ({agg_pct}/{test_pct} split) vs aggregated_matched vs kfold (k={KFOLD_K})",
+        fontsize=13, fontweight="bold",
+    )
     plt.tight_layout()
     plt.savefig(os.path.join(OUT_DIR, "strategy_comparison.png"), dpi=150, bbox_inches="tight")
     plt.close(fig)

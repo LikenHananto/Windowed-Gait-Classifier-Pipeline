@@ -1,99 +1,268 @@
 # Human Activity Recognition — Gait Classifier
 
-Two datasets, four analyses. Both datasets target a binary "walking" classification.
+Binary "walking vs not-walking" classification from wearable IMU data. The repository contains two datasets (DS1: lab-collected, dual-IMU, 3 subjects; DS2: free-living, single-IMU, 6 subjects), four training analyses, and a held-out validation pipeline that compares random vs subject-grouped train/test splits.
 
-## Data layout
+The repo lets you (1) reproduce the same windowed feature pipeline on each dataset, (2) train and evaluate a 22-model classifier registry under three split schemes, and (3) validate trained models against fully unseen subjects while controlling for sample-size effects.
 
-```
-Raw_Data/
-  DS1/   — multi-IMU (upper + lower), 3 subjects (01, 05, 07)
-           NN_train_lower_labeled.csv
-           NN_train_upper_labeled.csv
-           Cols: Var1, Var2..Var7, Task, time
-           Labels: walking, bending, (Unknown)
-  DS2/   — single IMU, 6 subjects (MCM-001..012)
-           MCM-NNN-HOP-{F,M}_Training_labeled.csv
-           Cols: timestamp, acc_x_g..z, gyro_x_deg_s..z, activity, is_walking
-           Labels: 8 activities + 'unlabeled' (dropped); target is `is_walking`
-```
+---
 
-Both datasets sample at ~100 Hz.
+## Quick start
 
-## Pipeline
+```bash
+# 1. install dependencies
+pip install numpy pandas scipy scikit-learn matplotlib seaborn xgboost
 
-1. `preprocessing_utils.py` — shared signal-processing primitives:
-   - 20 Hz Butterworth low-pass denoise
-   - 0.3 Hz low-pass for gravity/body and static/dynamic separation
-   - Jerk = diff(signal) * fs on body-acc / dynamic-gyro
-   - Sliding-window features: mean, std, dominant FFT freq
+# 2. preprocess both datasets (writes Processed_Data/*.csv)
+python DPP.py
 
-2. `preprocess_ds1.py` — DS1: align upper/lower IMU pair on a 10ms grid, then
-   apply the shared pipeline with `_lower` / `_upper` suffixes. Drops "Unknown"
-   rows. Output: `Processed_Data/DS1_W{w}_S{s}.csv` with columns
-   `subject_id, Task, <features>` (122 feature cols at W=256, S=128).
+# 3. run all four training analyses
+python run_all.py             # full 22-classifier registry — slow (tens of minutes)
+python run_all.py --fast      # 7-classifier smoke set — under a minute
 
-3. `preprocess_ds2.py` — DS2: drops `activity == 'unlabeled'`, then applies
-   the shared pipeline (no alignment, single IMU). Output:
-   `Processed_Data/DS2_W{w}_S{s}.csv` with columns
-   `subject_id, is_walking, <features>` (62 feature cols at W=256, S=128).
+# 4. external validation against unseen subjects
+python validate_ds2.py        # full registry
+python validate_ds2.py --fast # smoke set
 
-4. `analysis.py` — generic runner. Splits supported:
-   - `loso` — Leave-One-Subject-Out
-   - `groupkfold` — k folds, subjects as groups
-   - `aggregated` — random stratified train/test split (no subject separation)
-
-   For fold-based splits, per-fold metrics are averaged and confusion matrices
-   are summed. Walking-positive class is auto-detected (`'walking'` for DS1,
-   `1` for DS2).
-
-5. `Trainer.py` — kept from the original codebase (per-model train/eval helper
-   + walking-threshold sweep). The new `analysis.py` does not currently call
-   threshold tuning, but the helper is still useable standalone.
-
-## Run scripts
-
-| Script                    | Dataset | Split scheme                  |
-| ------------------------- | ------- | ----------------------------- |
-| `run_ds1_loso.py`         | DS1     | LOSO (3 folds: 01, 05, 07)    |
-| `run_ds1_aggregated.py`   | DS1     | Random 70/30 stratified       |
-| `run_ds2_kfold.py`        | DS2     | GroupKFold k=3 (2 subj/fold)  |
-| `run_ds2_aggregated.py`   | DS2     | Random 70/30 stratified       |
-| `run_all.py`              | both    | All four, plus combined `all_summaries.csv` |
-| `validate_ds2.py`         | DS2     | Train on full DS2 (all 6 subjects), predict on `Validation_Data/` (subjects 004, 007) |
-
-Each accepts `--fast` to use a 7-classifier smoke set instead of the full
-22-classifier registry. Without `--fast` the runs can take a long time on
-slower machines (Nu-SVC, GradientBoosting and MLP dominate).
-
-```
-python DPP.py                 # preprocess both datasets
-python run_all.py             # full registry (slow)
-python run_all.py --fast      # smoke set (~minute total)
+# 5. plot DS1 LOSO results for a chosen metric
+python plot_ds1_loso.py                 # walking_precision (default)
+python plot_ds1_loso.py walking_recall
+python plot_ds1_loso.py walking_f1
 ```
 
-## Outputs
+Outputs land in `Results_Plots/`. See **§5 Outputs** below for what each subdirectory contains.
+
+---
+
+## 1. Repository layout
 
 ```
+Human-Activity-Recognition-GAIT-CLASSIFIER-/
+├── Raw_Data/
+│   ├── DS1/                   3 subjects (01, 05, 07), dual IMU
+│   │   ├── 01_train_lower_labeled.csv
+│   │   ├── 01_train_upper_labeled.csv
+│   │   └── …
+│   └── DS2/                   6 subjects (MCM-001..012), single IMU
+│       └── MCM-NNN-HOP-{F,M}_Training_labeled.csv
+├── Validation_Data/           held-out subjects 004 + 007 (DS2 schema)
+├── Processed_Data/            generated by preprocess_*.py (DS1_…, DS2_…, Validation_…)
+├── Results_Plots/             generated by run_*.py and validate_ds2.py
+├── _archive_pre_overhaul/     original pipeline preserved for reference
+│
+├── preprocessing_utils.py     shared signal-processing primitives
+├── preprocess_ds1.py          DS1 preprocessor (dual-IMU, with alignment)
+├── preprocess_ds2.py          DS2 / Validation preprocessor (single-IMU)
+├── analysis.py                generic train/evaluate runner with three split schemes
+├── Trainer.py                 per-model train/eval helper + threshold sweep (legacy, unused by analysis.py)
+├── DPP.py                     thin driver — runs both preprocessors
+│
+├── run_ds1_loso.py            DS1 Leave-One-Subject-Out (3 folds)
+├── run_ds1_aggregated.py      DS1 random 70/30 stratified
+├── run_ds2_kfold.py           DS2 GroupKFold k=3 (2 subjects held out per fold)
+├── run_ds2_aggregated.py      DS2 random 70/30 stratified
+├── run_all.py                 runs all four + writes all_summaries.csv
+├── validate_ds2.py            external validation: aggregated vs aggregated_matched vs kfold
+├── plot_ds1_loso.py           per-metric DS1 LOSO comparison plot
+└── README.md
+```
+
+---
+
+## 2. Data
+
+Both datasets sample at ~100 Hz. Window: W=256 samples, step S=128 samples (≈2.56 s, 50% overlap).
+
+### DS1 — dual-IMU (lab data)
+- **Sensors**: 2 IMUs per subject — `_lower` (waist/leg) and `_upper` (torso/wrist).
+- **Subjects**: 01, 05, 07 (3 total).
+- **Schema**: `Var1` (timestamp), `Var2..Var4` (acc xyz), `Var5..Var7` (gyro xyz), `Task`, `time`.
+- **Labels**: `walking`, `bending`, plus `Unknown` (dropped).
+- **After windowing**: 1,992 windows total, **120 predictors per window**.
+
+### DS2 — single-IMU (free-living data)
+- **Sensors**: 1 IMU per subject.
+- **Subjects**: 001, 002, 003, 010, 011, 012 (6 total).
+- **Schema**: `timestamp`, `acc_{x,y,z}_g`, `gyro_{x,y,z}_deg_s`, `activity`, `is_walking`.
+- **Target column**: `is_walking` (binary, derived from `activity`).
+- **Labels in `activity`**: `bending_squatting`, `lying`, `sitting`, `stairs`, `standing`, `walking_indoor`, `walking_outdoor`, `walking_phone`, `unlabeled` (dropped).
+- DS2 timestamps are minute-resolution only; rows are treated as already-ordered at fs=100 Hz.
+- **After windowing**: 7,084 windows total (1 NaN row dropped → 7,076 used), **60 predictors per window**.
+
+### Validation_Data — fully held-out subjects
+- Same schema as DS2; subjects 004 + 007.
+- After windowing: 2,418 windows (1,316 from MCM-004, 1,102 from MCM-007).
+
+### Predictor breakdown
+
+Per IMU, the pipeline produces 60 predictors per window:
+- 24 **mean** features — one per signal column (raw, gravity, body, static, dynamic, jerks)
+- 24 **std** features — one per signal column
+- 12 **dominant FFT frequency** features — body-acc, dynamic-gyro, and their jerks
+
+DS1 has two IMUs → 120 predictors. DS2 has one → 60.
+
+---
+
+## 3. Pipeline
+
+Twelve stages, identical primitives applied to both datasets (only the channel set differs):
+
+1. **Load + label cleanup** — drop `Unknown` (DS1) / `unlabeled` (DS2) rows.
+2. **Sensor alignment** (DS1 only) — resample upper + lower IMU streams onto a shared 10 ms time grid via linear interpolation.
+3. **Denoise** — 4th-order Butterworth low-pass at 20 Hz, applied via `filtfilt` (zero-phase) to all 6 raw channels.
+4. **Component separation** — 4th-order Butterworth low-pass at 0.3 Hz to split each channel into:
+   - `acc_*_gravity` and `acc_*_body = filtered − gravity`
+   - `gyro_*_static` and `gyro_*_dynamic = filtered − static`
+5. **Jerk** — `diff(signal) * fs` on body-acc and dynamic-gyro channels.
+6. **Sliding window** — fixed window of W samples with step S samples; mixed-label windows dropped.
+7. **Feature extraction** — per window:
+   - **Time domain**: mean and std for every signal column.
+   - **Frequency domain**: dominant FFT frequency (peak of `|rfft|` after zeroing DC) for body-acc, dynamic-gyro, and their jerks.
+8. **Standardization** — `StandardScaler` fit on training fold only; applied to test/validation. Tree-based models see raw features.
+9. **Classifier registry** — 22 sklearn classifiers (LR, Ridge, SGD, PassiveAggressive, LDA, QDA, SVM-RBF/Linear, Nu-SVC, KNN-5/11, DecisionTree, ExtraTree, RandomForest, ExtraTrees, GradientBoosting, HistGradientBoosting, AdaBoost, Bagging, GaussianNB, MLP, XGBoost). Cloned per fold via `sklearn.base.clone`.
+10. **Split schemes** (pluggable in `analysis.py`):
+    - `loso` — Leave-One-Subject-Out
+    - `groupkfold` — k folds with subjects as groups
+    - `aggregated` — random stratified train/test split (no subject separation)
+11. **Evaluation** — per fold: accuracy, macro-F1, walking precision / recall / F1, confusion matrix. Across folds: mean per metric, summed CMs.
+12. **External validation** (`validate_ds2.py`) — three strategies trained on DS2, evaluated on `Validation_Data/`. See **§4** below.
+
+---
+
+## 4. Run scripts
+
+### Training analyses
+
+| Script | Dataset | Split | Notes |
+|---|---|---|---|
+| `run_ds1_loso.py` | DS1 | LOSO (3 folds: 01, 05, 07) | Honest cross-subject estimate |
+| `run_ds1_aggregated.py` | DS1 | Random 70/30 stratified | Optimistic — leaks subjects |
+| `run_ds2_kfold.py` | DS2 | GroupKFold k=3 (2 subjects held out per fold) | Honest cross-subject estimate |
+| `run_ds2_aggregated.py` | DS2 | Random 70/30 stratified | Optimistic — leaks subjects |
+| `run_all.py` | both | All four; writes `Results_Plots/all_summaries.csv` | Master driver |
+
+Every run script accepts `--fast` to swap the full 22-model registry for a 7-model smoke set:
+- Full registry: ~10–30 min total for `run_all.py`. Nu-SVC, GradientBoosting, and MLP dominate.
+- `--fast`: under a minute total.
+
+### External validation
+
+| Script | What it does |
+|---|---|
+| `validate_ds2.py` | Trains on DS2 under three strategies, predicts on `Validation_Data/` (subjects 004 + 007). Outputs side-by-side metrics + decomposed deltas. |
+
+The three strategies (set by `AGGREGATED_TEST_SIZE` constant in `validate_ds2.py`, currently 0.20 → 80/20 split):
+
+1. **`aggregated`** — random stratified split of DS2 (currently 80% train), predict on validation.
+2. **`aggregated_matched`** — same as aggregated but subsampled to match the k-fold per-fold average size. Isolates the strategy effect from the sample-size effect.
+3. **`kfold`** — GroupKFold k=3 on DS2; 3 fold models predict on validation; metrics averaged.
+
+Two derived columns in `comparison_pooled.csv`:
+- `sample_size_effect` = `aggregated − aggregated_matched` → extra-data benefit at the same strategy
+- `strategy_effect` = `aggregated_matched − kfold` → subject-shuffled benefit at equal n
+
+### Plotting
+
+| Script | What it does |
+|---|---|
+| `plot_ds1_loso.py [metric]` | Two-panel DS1 LOSO comparison: bar chart of mean ± std per model + heatmap of per-subject metric for top-10 models. Default metric: `walking_precision`. |
+
+Accepts any column name from `Results_Plots/DS1_LOSO/fold_metrics.csv`:
+
+```bash
+python plot_ds1_loso.py                 # walking_precision (default)
+python plot_ds1_loso.py walking_recall
+python plot_ds1_loso.py walking_f1
+python plot_ds1_loso.py accuracy
+python plot_ds1_loso.py macro_f1
+```
+
+### Preprocessing
+
+| Script | What it does |
+|---|---|
+| `DPP.py` | Runs both DS1 + DS2 preprocessors. Use `python DPP.py ds1` or `python DPP.py ds2` for one dataset only. |
+| `preprocess_ds1.py` | DS1 preprocessor (importable; runs as `__main__` with defaults). |
+| `preprocess_ds2.py` | DS2 + Validation preprocessor (`preprocess_ds2()` and `preprocess_validation()`). |
+
+The run scripts auto-call preprocessing if the processed CSV is missing, so first-time users only need to run preprocessing manually if they want to verify the output before training.
+
+---
+
+## 5. Outputs
+
+```
+Processed_Data/
+├── DS1_W256_S128.csv          (1992 × 122) — subject_id, Task, 120 features
+├── DS2_W256_S128.csv          (7084 × 62)  — subject_id, is_walking, 60 features
+└── Validation_W256_S128.csv   (2418 × 62)  — same schema as DS2
+
 Results_Plots/
-  DS1_LOSO/         summary_metrics.csv, fold_metrics.csv, classifier_comparison.png, cm_<top5>.png
-  DS1_aggregated/   same set
-  DS2_kfold/        same set
-  DS2_aggregated/   same set
-  all_summaries.csv (combined table from run_all.py)
+├── DS1_LOSO/
+│   ├── summary_metrics.csv          per-model means across folds
+│   ├── fold_metrics.csv             long format: one row per (fold, model)
+│   ├── classifier_comparison.png    4-panel bar chart (precision/recall/F1/accuracy)
+│   ├── cm_<top5>.png                aggregated confusion matrices for top-5 models
+│   └── loso_<metric>.png            generated by plot_ds1_loso.py
+├── DS1_aggregated/                  same file set as DS1_LOSO
+├── DS2_kfold/                       same file set
+├── DS2_aggregated/                  same file set
+├── Validation_DS2/
+│   ├── validation_long.csv          model × strategy × scope (pooled / per-subject)
+│   ├── comparison_pooled.csv        side-by-side pooled metrics + effect deltas
+│   ├── comparison_per_subject.csv   per-subject walking precision under each strategy
+│   ├── strategy_comparison.png      3-bar grouped chart per classifier
+│   └── cm_<top3>_{aggregated,aggregated_matched,kfold}.png
+└── all_summaries.csv                combined table from run_all.py
 ```
 
-`fold_metrics.csv` is long-format (one row per (fold, model)); `summary_metrics.csv`
-is the per-model average across folds.
+`fold_metrics.csv` is the source of truth for per-fold breakdowns; `summary_metrics.csv` is the per-model average and is what gets sorted to find the headline winner.
 
-## Notes
+---
 
-- **Subject 7 is an outlier under LOSO**: when held out, every model collapses
-  toward majority-class prediction (~36% accuracy). This drags the LOSO mean
-  metrics down significantly compared to aggregated. Worth investigating
-  whether subject 7's recording differs in mounting orientation or sensor.
-- The **aggregated DS1** number (~99% accuracy) is optimistic — it leaks
-  windows from the same subject across train and test. Treat LOSO as the
-  honest cross-subject estimate.
-- DS2 GroupKFold with k=3 means 2 subjects are held out per fold; the
-  combined train set per fold is ~4700 windows, validation ~2300.
-- The original code is preserved under `_archive_pre_overhaul/`.
+## 6. Key findings
+
+The full discussion is in [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md). Headline points:
+
+- **Subject-aware splits estimate generalization correctly; random splits overstate performance.** DS1 LOSO walking precision averages ~0.86 vs DS1 aggregated ~0.99. DS2 GroupKFold ~0.91 walking precision (~0.80 accuracy) vs DS2 aggregated ~0.95 (~0.94 accuracy).
+- **Subject 7 (DS1) is an outlier.** When held out under LOSO, most models collapse toward majority-class prediction. Two of the three folds drag the mean down. With only 3 subjects, one outlier dominates.
+- **At equal training size, "aggregated wins" disappears.** External validation with an 80/20 aggregated split, an aggregated_matched (~67%) split, and k-fold (~67%/fold) on the same `Validation_Data` shows that for the top performers (RF, Extra Trees, SVM-RBF, GradientBoosting, LR), both `sample_size_effect` and `strategy_effect` are within ±0.01 walking precision. The original aggregated edge was a sample-size artifact.
+- **Simple/fragile tree models are the exception.** Decision Tree, Extra Tree, and Bagging show meaningful strategy effects (+0.03 to +0.07): they overfit subject-specific quirks, so subject-grouped training data hurts them more.
+- **Practical recommendation**: Random Forest or SVM-RBF, trained on as much subject-diverse data as possible, with performance reported using a GroupKFold-style estimate (≈0.93 walking precision, ≈0.91 accuracy on `Validation_Data`).
+
+---
+
+## 7. Configuration knobs
+
+Tunable constants you might want to change:
+
+- **Window size / step**: `WINDOW, STEP = 256, 128` at the top of every `run_*.py` and `validate_ds2.py`.
+- **Aggregated split ratio**: `AGGREGATED_TEST_SIZE` in `validate_ds2.py` (currently 0.20).
+- **K-fold k**: `KFOLD_K` in `validate_ds2.py` and `k=3` in `run_ds2_kfold.py`.
+- **Random seed**: `RANDOM_STATE = 42` in `validate_ds2.py` and `random_state=42` in `analysis.py:run_analysis`.
+- **Classifier subset**: `analysis.build_classifiers()` (full 22) vs `analysis.build_classifiers_fast()` (7-model smoke set).
+
+---
+
+## 8. Notes on the codebase
+
+- The original pre-overhaul scripts are preserved under `_archive_pre_overhaul/` — `Data_Pre_Processor.py` (single combined preprocessor), `Simple_Models.py` (monolithic train/evaluate), and the original `Trainer.py` and `DPP.py`.
+- `Trainer.py` at the top level is the legacy per-model trainer (with walking-threshold sweep). It's not currently called by `analysis.py` but is kept for ad-hoc threshold tuning.
+- The pipeline transparently drops rows containing NaN feature values; this is rare and only occurs for windows with zero variance in some signal column. The drop is logged to stdout.
+- The walking-positive class is auto-detected by `analysis.py` — `'walking'` for DS1, `1` for DS2.
+
+---
+
+## 9. Dependencies
+
+```
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+seaborn
+xgboost
+```
+
+Tested on Python 3.10. Any reasonably recent versions of these packages should work; the codebase doesn't pin specific versions.
